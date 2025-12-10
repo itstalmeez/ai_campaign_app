@@ -66,13 +66,17 @@ def call_model(system_prompt: str, user_prompt: str, max_new_tokens: int = 512) 
     )
 
     try:
-        output = client.text_generation(
-            prompt,
-            max_new_tokens=max_new_tokens,
-            temperature=0.7,
-            top_p=0.95,
-            repetition_penalty=1.1,
-        )
+        output = client.chat_completion(
+    model=MODEL_ID,
+    messages=[
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ],
+    max_tokens=max_new_tokens,
+    temperature=0.7,
+    top_p=0.95,
+)
+
         return output.strip()
     except Exception as e:
         return f"⚠️ Ошибка при вызове модели: {e}"
@@ -472,3 +476,4 @@ else:
                     input_text=research_input,
                     insights=insights,
                 )
+
