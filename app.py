@@ -1,7 +1,6 @@
 import os
 import textwrap
 from datetime import datetime
-import json
 
 import streamlit as st
 from huggingface_hub import InferenceClient
@@ -14,67 +13,70 @@ from google.oauth2.service_account import Credentials
 # CONFIG
 # ---------------------------
 
-# Choose a chat / instruction model that supports Russian reasonably well.
-# You can change this to another instruct model if needed.
+# Hugging Face model (supports chat / conversational)
 MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
 
-# Spreadsheet constants
+# Google Sheets
 SPREADSHEET_NAME = "AI_Campaign_Control"
 JOBPOSTS_SHEET = "JobPosts"
 RESEARCH_SHEET = "ResearchInsights"
 
-# Read secrets
+# Secrets (set in Streamlit Cloud → Settings → Secrets)
 HF_TOKEN = st.secrets.get("HF_TOKEN", os.getenv("HUGGINGFACEHUB_API_TOKEN"))
 GCP_SERVICE_ACCOUNT = st.secrets.get("gcp_service_account", None)
 
 
 # ---------------------------
-# HELPERS: Hugging Face client
+# HUGGING FACE CLIENT (CHAT COMPLETION)
 # ---------------------------
 
 @st.cache_resource(show_spinner=False)
 def get_hf_client():
-    """Create Hugging Face Inference client if token is available."""
+    """Create HF InferenceClient if token is set."""
     if not HF_TOKEN:
         return None
     try:
-        client = InferenceClient(model=MODEL_ID, token=HF_TOKEN)
-        return client
+        return InferenceClient(MODEL_ID, token=HF_TOKEN)
     except Exception:
         return None
 
 
 def call_model(system_prompt: str, user_prompt: str, max_new_tokens: int = 512) -> str:
+    """
+    Call the HF chat model using chat_completion.
+
+    This fixes the previous error:
+    'Model ... is not supported for task text-generation. Supported task: conversational.'
+    """
     client = get_hf_client()
     if client is None:
-        return "⚠️ Модель не настроена. Проверьте токен HF_TOKEN."
+        return "⚠️ Модель не настроена. Проверьте HF_TOKEN в secrets."
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
     try:
         response = client.chat_completion(
-            model=MODEL_ID,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages,
             max_tokens=max_new_tokens,
             temperature=0.7,
             top_p=0.95,
         )
-
-        return response.choices[0].message["content"]
-
+        # HF chat_completion returns an object with choices
+        return response.choices[0].message["content"].strip()
     except Exception as e:
         return f"⚠️ Ошибка при вызове модели: {e}"
 
 
-
 # ---------------------------
-# HELPERS: Google Sheets
+# GOOGLE SHEETS HELPERS
 # ---------------------------
 
 @st.cache_resource(show_spinner=False)
 def get_gsheet_client():
-    """Create gspread client from service account info in secrets. Returns None if not configured."""
+    """Create gspread client from service-account info in secrets."""
     if not GCP_SERVICE_ACCOUNT:
         return None
 
@@ -161,13 +163,13 @@ def append_research_to_sheet(
                 insights,
             ]
         )
-        st.success("✅ Результаты исследования сохранены в Google Sheets (ResearchInsights).")
+        st.success("✅ Инсайты сохранены в Google Sheets (ResearchInsights).")
     except Exception as e:
         st.error(f"Ошибка при записи в Google Sheets: {e}")
 
 
 # ---------------------------
-# STREAMLIT UI
+# UI CONFIG
 # ---------------------------
 
 st.set_page_config(
@@ -177,29 +179,48 @@ st.set_page_config(
 
 st.title("AI Campaign Assistant")
 st.caption(
-    "Генерация вакансий и аналитика кампаний с помощью онлайн-модели (Hugging Face) "
-    "и интеграции с Google Sheets."
+    "Внутренний инструмент для генерации русскоязычных вакансий и аналитики кампаний. "
+    "Основан на онлайн-модели (Hugging Face) с интеграцией в Google Sheets."
 )
 
-mode = st.sidebar.radio(
-    "Режим работы",
-    ["📝 Вакансии и резюме (Posts & Summaries)", "📊 Аналитика и исследования (Research & Insights)"],
-)
+# Sidebar status
+st.sidebar.header("Статус системы")
 
-st.sidebar.markdown("---")
 st.sidebar.write(f"Модель: `{MODEL_ID}`")
 
-if not HF_TOKEN:
-    st.sidebar.error("HF_TOKEN не настроен в secrets. Модель работать не будет.")
-if not GCP_SERVICE_ACCOUNT:
-    st.sidebar.warning("gcp_service_account не настроен — запись в Google Sheets отключена.")
+if HF_TOKEN:
+    st.sidebar.success("HF_TOKEN настроен ✅")
+else:
+    st.sidebar.error("HF_TOKEN не настроен ❌ — модель не будет работать.")
+
+if GCP_SERVICE_ACCOUNT:
+    st.sidebar.success("Google Sheets интеграция включена ✅")
+else:
+    st.sidebar.warning("gcp_service_account не настроен — запись в Sheets отключена.")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "1. Вкладка **Вакансии** — генерируем объявления и резюме.\n"
+    "2. Вкладка **Аналитика** — задаём вопросы, интерпретируем метрики."
+)
+
+# Tabs layout
+tab_posts, tab_research = st.tabs(
+    ["📝 Вакансии и краткие резюме", "📊 Аналитика и исследования"]
+)
 
 
 # ---------------------------
-# MODE 1: POSTS & SUMMARIES (RUSSIAN JOB POSTS)
+# TAB 1: POSTS & SUMMARIES
 # ---------------------------
-if mode.startswith("📝"):
+with tab_posts:
     st.subheader("📝 Генерация вакансий и кратких резюме (по-русски)")
+
+    st.info(
+        "1. Заполните поля.\n"
+        "2. Нажмите **'Сгенерировать объявление на русском'**.\n"
+        "3. При необходимости сохраните результат в Google Sheets."
+    )
 
     col1, col2 = st.columns(2)
 
@@ -222,9 +243,7 @@ if mode.startswith("📝"):
             "Целевая аудитория",
             placeholder="Иммигранты, ищущие работу в Германии в сфере монтажа кухонь",
         )
-        variant_label = st.selectbox(
-            "Вариант (A/B/C)", ["A", "B", "C"], index=0
-        )
+        variant_label = st.selectbox("Вариант (A/B/C)", ["A", "B", "C"], index=0)
         application_link = st.text_input(
             "Ссылка на форму / анкету (опционально)",
             placeholder="https://docs.google.com/forms/...",
@@ -239,8 +258,8 @@ if mode.startswith("📝"):
 
     gen_col1, gen_col2 = st.columns(2)
 
-    generated_post = None
-    summary_text = None
+    generated_post = st.session_state.get("generated_post", "")
+    summary_text = st.session_state.get("summary_text", "")
 
     # --- Generate Russian job post ---
     if gen_col1.button("✏️ Сгенерировать объявление на русском"):
@@ -272,38 +291,17 @@ if mode.startswith("📝"):
 
                 user_prompt = textwrap.dedent(
                     f"""
-                    Составь русскоязычное объявление о вакансии в стиле ниже (с эмодзи и структурой):
+                    Составь русскоязычное объявление о вакансии в стиле ниже (с эмодзи и структурой).
 
                     ПРИМЕР СТИЛЯ:
                     "2025.0021 – Установщик кухонь
-
                     👤 Должность: Установщик кухонь – 3 вакансии
                     💶 Оплата (чистыми): 15,50 € / час
                     📅 График / период работы: Пн–Пт, с 08:00. 180–220 часов в месяц.
                     🦺 Рабочая одежда: Предоставляется.
                     🔧 Инструменты: Предоставляются бесплатно.
                     🚙 Транспорт до работы: Бесплатно (служебный автомобиль).
-
-                    📍 Требования / Для кого:
-                    Мужчины 25–45 лет.
-                    Опыт работы обязателен – от 1 года.
-                    Навыки сборки и установки мебели, подключения бытовой техники.
-                    Знание языка: немецкий на уровне A2 (для общения с клиентами).
-
-                    📝 Необходимые документы:
-                    Паспорт ЕС, Параграф 24, водительское удостоверение категории B (преимущество).
-
-                    📋 Обязанности:
-                    Доставка и подъем кухонных гарнитуров
-                    Сборка, установка и выравнивание модулей
-                    Врезка и монтаж моек, варочных панелей
-                    Подключение бытовой техники
-
-                    🧾 Испытательный срок: 5 рабочих дней
-                    📆 Начало работы: Срочно
-
-                    👉 Заинтересованы?
-                    Заполните форму и получите работу: <ссылка>"
+                    ..."
 
                     ТЕПЕРЬ СДЕЛАЙ НОВУЮ ВАКАНСИЮ ПО ЭТИМ ДАННЫМ:
 
@@ -317,7 +315,7 @@ if mode.startswith("📝"):
                     Сырой текст / заметки:
                     {raw_description}
 
-                    Требования к результату:
+                    Требования:
                     - Сохрани похожую структуру и эмодзи-блоки, как в примере.
                     - Обязательно укажи город/регион.
                     - Если есть информация о зарплате, графике, жилье, транспорте — выдели её.
@@ -329,24 +327,23 @@ if mode.startswith("📝"):
                 )
 
                 generated_post = call_model(system_prompt, user_prompt, max_new_tokens=350)
+                st.session_state["generated_post"] = generated_post
 
-            st.markdown("#### ✏️ Сгенерированное объявление (русский)")
-            st.write(generated_post)
+    if generated_post:
+        st.markdown("#### ✏️ Сгенерированное объявление (русский)")
+        st.write(generated_post)
 
-            if st.button("💾 Сохранить объявление в Google Sheets"):
-                if generated_post:
-                    append_jobpost_to_sheet(
-                        timestamp=datetime.utcnow(),
-                        job_title=job_title,
-                        city=city,
-                        platform=platform,
-                        variant_label=variant_label,
-                        target_audience=target_audience,
-                        application_link=application_link,
-                        generated_post=generated_post,
-                    )
-                else:
-                    st.warning("Сначала сгенерируйте объявление.")
+        if st.button("💾 Сохранить объявление в Google Sheets"):
+            append_jobpost_to_sheet(
+                timestamp=datetime.utcnow(),
+                job_title=job_title,
+                city=city,
+                platform=platform,
+                variant_label=variant_label,
+                target_audience=target_audience,
+                application_link=application_link,
+                generated_post=generated_post,
+            )
 
     # --- Generate employer-facing summary ---
     if gen_col2.button("📄 Сгенерировать краткое резюме для работодателя (ENG/RU)"):
@@ -357,7 +354,7 @@ if mode.startswith("📝"):
                 system_prompt = (
                     "You create concise professional summaries for internal use by employers "
                     "and project managers. You highlight key points and avoid marketing fluff. "
-                    "You can mix Russian and English if needed."
+                    "You may mix Russian and English if helpful."
                 )
 
                 user_prompt = textwrap.dedent(
@@ -379,20 +376,22 @@ if mode.startswith("📝"):
                 )
 
                 summary_text = call_model(system_prompt, user_prompt, max_new_tokens=250)
+                st.session_state["summary_text"] = summary_text
 
-            st.markdown("#### 📄 Краткое резюме для работодателя")
-            st.write(summary_text)
+    if summary_text:
+        st.markdown("#### 📄 Краткое резюме для работодателя")
+        st.write(summary_text)
 
 
 # ---------------------------
-# MODE 2: RESEARCH & INSIGHTS
+# TAB 2: RESEARCH & INSIGHTS
 # ---------------------------
-else:
-    st.subheader("📊 Аналитика и исследования (Research & Insights)")
+with tab_research:
+    st.subheader("📊 Аналитика и исследования")
 
-    st.markdown(
-        "Здесь можно задавать вопросы про стратегии, платформы, регионы, "
-        "или вставлять свои KPI и просить пояснения."
+    st.info(
+        "Сюда можно вставить результаты кампаний, KPI-таблицы или просто задать вопрос "
+        "про регионы и платформы. AI вернёт краткий анализ и рекомендации."
     )
 
     research_type = st.selectbox(
@@ -421,7 +420,7 @@ else:
             with st.spinner("Анализирую..."):
                 if research_type == "Интерпретация метрик / таблиц":
                     system_prompt = (
-                        "Ты — аналитик по маркетингу и рекрутингу для blue-collar платформы. "
+                        "Ты — аналитик по маркетингу и рекрутингу для платформы по найму рабочих. "
                         "Ты интерпретируешь KPI, варианты объявлений и результаты по регионам. "
                         "Отвечай кратко и по-русски, давай только практические выводы."
                     )
@@ -462,5 +461,3 @@ else:
                     input_text=research_input,
                     insights=insights,
                 )
-
-
