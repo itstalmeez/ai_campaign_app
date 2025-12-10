@@ -45,41 +45,27 @@ def get_hf_client():
 
 
 def call_model(system_prompt: str, user_prompt: str, max_new_tokens: int = 512) -> str:
-    """Wrapper for text generation. Returns a safe error message if client not ready."""
     client = get_hf_client()
     if client is None:
-        return (
-            "⚠️ Модель сейчас не настроена. Попросите технического специалиста "
-            "добавить HF_TOKEN в secrets и проверить MODEL_ID."
-        )
-
-    prompt = textwrap.dedent(
-        f"""\
-        [SYSTEM]
-        {system_prompt}
-
-        [USER]
-        {user_prompt}
-
-        [ASSISTANT]
-        """
-    )
+        return "⚠️ Модель не настроена. Проверьте токен HF_TOKEN."
 
     try:
-        output = client.chat_completion(
-    model=MODEL_ID,
-    messages=[
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ],
-    max_tokens=max_new_tokens,
-    temperature=0.7,
-    top_p=0.95,
-)
+        response = client.chat_completion(
+            model=MODEL_ID,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=max_new_tokens,
+            temperature=0.7,
+            top_p=0.95,
+        )
 
-        return output.strip()
+        return response.choices[0].message["content"]
+
     except Exception as e:
         return f"⚠️ Ошибка при вызове модели: {e}"
+
 
 
 # ---------------------------
@@ -476,4 +462,5 @@ else:
                     input_text=research_input,
                     insights=insights,
                 )
+
 
